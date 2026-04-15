@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>human-detector-sdk demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <p>Open this file via an HTTP server (not <code>file://</code>) so ES modules load.</p>
+    <p>
+      From repo root: build the SDK once (<code>npm run build --prefix sdk</code>), run
+      <code>npm run start:server</code>, then serve this <code>examples</code> directory over HTTP.
+    </p>
+    <pre id="out"></pre>
+    <script type="module">
+      import { initDetector } from "../sdk/dist/index.js";
+
+      const out = document.getElementById("out");
+      const detector = initDetector({
+        apiKey: "demo_key",
+        endpoint: "http://localhost:3000",
+        debug: true,
+      });
+
+      detector.start();
+
+      setTimeout(async () => {
+        const result = await detector.getScore();
+        out.textContent = JSON.stringify(result, null, 2);
+        detector.stop();
+      }, 10000);
+    </script>
+  </body>
+</html>

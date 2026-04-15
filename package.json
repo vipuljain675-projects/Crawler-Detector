@@ -1,0 +1,12 @@
+{
+  "name": "human-detector",
+  "private": true,
+  "description": "Human vs bot detection: browser SDK + Express scorer",
+  "scripts": {
+    "build:sdk": "npm run build --prefix sdk",
+    "build:server": "npm run build --prefix server",
+    "build": "npm run build:sdk && npm run build:server",
+    "dev:server": "npm run dev --prefix server",
+    "start:server": "npm start --prefix server"
+  }
+}
