@@ -97,7 +97,7 @@ app.get("/sessions-raw", (_req, res) => {
   res.json(list);
 });
 
-app.get("/dashboard", (_req, res) => {
+app.get("/", (_req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html lang="en">
