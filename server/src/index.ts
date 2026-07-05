@@ -5,10 +5,38 @@ import { computeHumanScore } from "./scoring.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
+// Extended type to keep track of lastActivity for garbage collection
+type TrackedSessionRecord = SessionRecord & { lastActivity: number };
+
 /** In-memory session store (MVP); swap for Redis/DB for production). */
-const sessions = new Map<string, SessionRecord>();
+const sessions = new Map<string, TrackedSessionRecord>();
 
 const MAX_EVENTS = 4000;
+
+// Real-time Traffic Log structure for Chart.js
+interface TrafficPoint {
+  timestamp: string; // HH:MM:SS
+  score: number;
+  isHuman: boolean;
+}
+const trafficHistory: TrafficPoint[] = [];
+
+// Session Garbage Collector (RAM Protection)
+// Clean up sessions older than 30 minutes, check every 2 minutes
+const SESSION_TTL = 30 * 60 * 1000; 
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [sid, record] of sessions.entries()) {
+    if (now - record.lastActivity > SESSION_TTL) {
+      sessions.delete(sid);
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) {
+    console.log(`🧹 [Garbage Collector] Cleaned up ${cleaned} expired sessions from RAM.`);
+  }
+}, 2 * 60 * 1000);
 
 function mergeEvents(existing: StoredEvent[], incoming: StoredEvent[]): StoredEvent[] {
   const merged = existing.concat(incoming);
@@ -35,9 +63,10 @@ app.post("/collect", (req, res) => {
     return;
   }
 
-  const prev = sessions.get(sessionId) ?? { events: [] };
-  const next: SessionRecord = {
+  const prev = sessions.get(sessionId) ?? { events: [], lastActivity: Date.now() };
+  const next: TrackedSessionRecord = {
     events: mergeEvents(prev.events, events as StoredEvent[]),
+    lastActivity: Date.now()
   };
   if (features && typeof features === "object") {
     next.features = features as StoredFeatures;
@@ -60,6 +89,21 @@ app.post("/score", (req, res) => {
   const score = computeHumanScore(record);
   const isHuman = score > 0.5;
   
+  // Update lastActivity timestamp
+  record.lastActivity = Date.now();
+  sessions.set(sessionId, record);
+
+  // Push score point to traffic logs
+  const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  trafficHistory.push({
+    timestamp: timeString,
+    score: Number(score.toFixed(3)),
+    isHuman
+  });
+  if (trafficHistory.length > 30) {
+    trafficHistory.shift(); // Keep last 30 requests to keep graph clean
+  }
+
   // Print score details directly in the terminal logs
   console.log(`\n======================================================`);
   console.log(`🤖 [BOT DETECT SCORE]`);
@@ -94,7 +138,10 @@ app.get("/sessions-raw", (_req, res) => {
       features: record.features || { movementEntropy: 0 }
     };
   });
-  res.json(list);
+  res.json({
+    sessions: list,
+    trafficHistory: trafficHistory
+  });
 });
 
 app.get("/", (_req, res) => {
@@ -104,21 +151,23 @@ app.get("/", (_req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Sensei Bot-Detector | Real-time Shield</title>
+      <title>Sensei Shield | Real-time Bot Radar</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <!-- Chart.js CDN -->
+      <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Fira+Code&display=swap" rel="stylesheet">
       <style>
         body {
           font-family: 'Outfit', sans-serif;
-          background: #090B11;
+          background: #07090E;
         }
         .glass {
-          background: rgba(17, 22, 35, 0.7);
+          background: rgba(13, 17, 28, 0.7);
           backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.04);
         }
         .glow {
-          box-shadow: 0 0 40px rgba(99, 102, 241, 0.15);
+          box-shadow: 0 0 40px rgba(99, 102, 241, 0.12);
         }
         .font-code {
           font-family: 'Fira Code', monospace;
@@ -127,12 +176,12 @@ app.get("/", (_req, res) => {
     </head>
     <body class="text-slate-100 min-h-screen relative overflow-x-hidden">
       <!-- Glow effects -->
-      <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-indigo-900/10 rounded-full blur-[120px] pointer-events-none"></div>
-      <div class="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-900/10 rounded-full blur-[120px] pointer-events-none"></div>
+      <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-indigo-950/20 rounded-full blur-[120px] pointer-events-none"></div>
+      <div class="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-950/20 rounded-full blur-[120px] pointer-events-none"></div>
 
       <div class="max-w-6xl mx-auto px-6 py-10 relative z-10">
         <!-- Header -->
-        <header class="flex justify-between items-center mb-10 pb-6 border-b border-white/5">
+        <header class="flex justify-between items-center mb-8 pb-6 border-b border-white/5">
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -150,10 +199,24 @@ app.get("/", (_req, res) => {
           </div>
         </header>
 
+        <!-- Dynamic Live Chart -->
+        <div class="glass p-6 rounded-2xl mb-8 glow">
+          <div class="flex justify-between items-center mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white">Real-Time Threat Intelligence</h2>
+              <p class="text-xs text-slate-400">Score logs (0% = Bot, 100% = Human) plotted on incoming login/signup requests</p>
+            </div>
+            <span class="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded font-mono font-code uppercase">Chart.js Live</span>
+          </div>
+          <div class="h-48 w-full relative">
+            <canvas id="trafficChart"></canvas>
+          </div>
+        </div>
+
         <!-- Stats Cards -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
-          <div class="glass p-5 rounded-2xl glow">
-            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Total Sessions</p>
+          <div class="glass p-5 rounded-2xl">
+            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">RAM Cache Size</p>
             <h3 id="stat-total" class="text-3xl font-extrabold text-white">0</h3>
           </div>
           <div class="glass p-5 rounded-2xl">
@@ -172,7 +235,7 @@ app.get("/", (_req, res) => {
 
         <!-- Session Records -->
         <h2 class="text-lg font-bold text-white mb-5 flex items-center gap-2">
-          <span>Active Sessions Log</span>
+          <span>Active Sessions Cache</span>
           <span class="text-xs bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded font-mono font-code" id="session-count-badge">0</span>
         </h2>
 
@@ -191,6 +254,48 @@ app.get("/", (_req, res) => {
 
       <!-- Live Polling Script -->
       <script>
+        let chart = null;
+
+        function initChart() {
+          const ctx = document.getElementById('trafficChart').getContext('2d');
+          chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: [],
+              datasets: [{
+                label: 'Human Score Likelihood (%)',
+                borderColor: '#6366F1',
+                borderWidth: 2,
+                backgroundColor: 'rgba(99, 102, 241, 0.04)',
+                data: [],
+                tension: 0.45,
+                fill: true,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                y: {
+                  min: 0,
+                  max: 100,
+                  ticks: { color: '#64748B', stepSize: 20 },
+                  grid: { color: 'rgba(255, 255, 255, 0.03)' }
+                },
+                x: {
+                  ticks: { color: '#64748B' },
+                  grid: { display: false }
+                }
+              },
+              plugins: {
+                legend: { display: false }
+              }
+            }
+          });
+        }
+
         async function fetchSessions() {
           try {
             const res = await fetch("/sessions-raw");
@@ -202,7 +307,10 @@ app.get("/", (_req, res) => {
           }
         }
 
-        function updateUI(sessions) {
+        function updateUI(data) {
+          const sessions = data.sessions;
+          const trafficHistory = data.trafficHistory;
+
           // Stats Calculations
           const total = sessions.length;
           const humans = sessions.filter(s => s.isHuman).length;
@@ -220,6 +328,19 @@ app.get("/", (_req, res) => {
           document.getElementById("stat-bots").innerText = bots;
           document.getElementById("stat-confidence").innerText = avgConfidence.toFixed(1) + "%";
           document.getElementById("session-count-badge").innerText = total;
+
+          // Update Chart
+          if (chart && trafficHistory) {
+            chart.data.labels = trafficHistory.map(h => h.timestamp);
+            chart.data.datasets[0].data = trafficHistory.map(h => h.score * 100);
+            
+            // Map point colors: Green for human, Red for bot
+            const pointColors = trafficHistory.map(h => h.isHuman ? '#10B981' : '#EF4444');
+            chart.data.datasets[0].pointBackgroundColor = pointColors;
+            chart.data.datasets[0].pointBorderColor = pointColors;
+            
+            chart.update('none');
+          }
 
           const noSessionsDiv = document.getElementById("no-sessions");
           const sessionsGrid = document.getElementById("sessions-grid");
@@ -243,16 +364,16 @@ app.get("/", (_req, res) => {
               
             const statusLabel = s.isHuman ? "Human Verified" : "Bot Detected";
 
-            return \`
+            return `
               <div class="glass p-6 rounded-2xl flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-white/10">
                 <div>
                   <div class="flex justify-between items-start mb-4">
                     <div>
                       <span class="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Session Reference</span>
-                      <code class="font-code text-xs font-semibold text-slate-300 break-all bg-white/5 px-2 py-0.5 rounded">\${shortId}</code>
+                      <code class="font-code text-xs font-semibold text-slate-300 break-all bg-white/5 px-2 py-0.5 rounded">${shortId}</code>
                     </div>
-                    <span class="px-2.5 py-1 rounded-full text-xs font-bold \${badgeClass}">
-                      \${statusLabel}
+                    <span class="px-2.5 py-1 rounded-full text-xs font-bold ${badgeClass}">
+                      ${statusLabel}
                     </span>
                   </div>
 
@@ -260,10 +381,10 @@ app.get("/", (_req, res) => {
                   <div class="mb-4">
                     <div class="flex justify-between text-xs font-semibold mb-1">
                       <span class="text-slate-400">Human Likelihood</span>
-                      <span class="\${s.isHuman ? 'text-emerald-400' : 'text-rose-400'} font-bold">\${(s.score * 100).toFixed(1)}%</span>
+                      <span class="${s.isHuman ? 'text-emerald-400' : 'text-rose-400'} font-bold">${(s.score * 100).toFixed(1)}%</span>
                     </div>
                     <div class="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                      <div class="h-full rounded-full \${s.isHuman ? 'bg-emerald-500' : 'bg-rose-505 bg-rose-500'}" style="width: \${s.score * 100}%"></div>
+                      <div class="h-full rounded-full ${s.isHuman ? 'bg-emerald-500' : 'bg-rose-500'}" style="width: ${s.score * 100}%"></div>
                     </div>
                   </div>
 
@@ -271,28 +392,29 @@ app.get("/", (_req, res) => {
                   <div class="grid grid-cols-2 gap-3 text-xs border-t border-white/5 pt-4">
                     <div>
                       <span class="text-slate-500 block mb-0.5">Entropy (Movement Randomness)</span>
-                      <span class="font-bold text-slate-300 font-code">\${s.features.movementEntropy.toFixed(3)}</span>
+                      <span class="font-bold text-slate-300 font-code">${s.features.movementEntropy.toFixed(3)}</span>
                     </div>
                     <div>
                       <span class="text-slate-500 block mb-0.5">Action Delay Pattern</span>
-                      <span class="font-bold text-slate-300 font-code">\${s.eventCount > 2 ? 'Normal' : 'Analyzing...'}</span>
+                      <span class="font-bold text-slate-300 font-code">${s.eventCount > 2 ? 'Normal' : 'Analyzing...'}</span>
                     </div>
                   </div>
                 </div>
 
                 <!-- Event Breakdown Bubbles -->
                 <div class="flex flex-wrap gap-1.5 mt-5 pt-3 border-t border-white/5">
-                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">🖱️ \${s.breakdown.mouse} mouse</span>
-                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">📜 \${s.breakdown.scroll} scroll</span>
-                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">⌨️ \${s.breakdown.keyboard} keys</span>
-                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">🎯 \${s.breakdown.click} clicks</span>
+                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">🖱️ ${s.breakdown.mouse} mouse</span>
+                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">📜 ${s.breakdown.scroll} scroll</span>
+                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">⌨️ ${s.breakdown.keyboard} keys</span>
+                  <span class="bg-white/5 text-slate-400 px-2 py-0.5 rounded text-[10px] font-medium font-code">🎯 ${s.breakdown.click} clicks</span>
                 </div>
               </div>
-            \`;
+            `;
           }).join("");
         }
 
-        // Poll every 3 seconds
+        // Initialize Chart and Poll
+        initChart();
         fetchSessions();
         setInterval(fetchSessions, 3000);
       </script>
