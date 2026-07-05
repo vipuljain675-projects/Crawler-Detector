@@ -137,7 +137,8 @@ app.get("/sessions-raw", (_req, res) => {
       isHuman,
       eventCount: record.events.length,
       breakdown: { mouse: mouseCount, scroll: scrollCount, keyboard: keyCount, click: clickCount },
-      features: record.features || { movementEntropy: 0 }
+      features: record.features || { movementEntropy: 0 },
+      lastActivity: record.lastActivity
     };
   });
   res.json({

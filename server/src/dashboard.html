@@ -215,6 +215,7 @@
           : "bg-rose-500/10 text-rose-400 border border-rose-500/20";
           
         const statusLabel = s.isHuman ? "Human Verified" : "Bot Detected";
+        const timeString = s.lastActivity ? new Date(s.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Active Now';
 
         return `
           <div class="glass p-6 rounded-2xl flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-white/10">
@@ -223,6 +224,7 @@
                 <div>
                   <span class="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Session Reference</span>
                   <code class="font-code text-xs font-semibold text-slate-300 break-all bg-white/5 px-2 py-0.5 rounded">${shortId}</code>
+                  <span class="text-[9px] font-semibold text-slate-400 block mt-1">🕒 Checked at: ${timeString}</span>
                 </div>
                 <span class="px-2.5 py-1 rounded-full text-xs font-bold ${badgeClass}">
                   ${statusLabel}
